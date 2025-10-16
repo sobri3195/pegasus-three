@@ -1,0 +1,31 @@
+{
+  "api_keys": {
+    "shodan": "",
+    "virustotal": "",
+    "haveibeenpwned": "",
+    "fullcontact": "",
+    "hunter_io": "",
+    "clearbit": ""
+  },
+  "scan_intensity": "medium",
+  "output_format": "html",
+  "use_proxy": false,
+  "proxy": {
+    "http": "",
+    "https": ""
+  },
+  "timeout": 30,
+  "user_agent": "Pegasus-OSINT/1.0",
+  "max_threads": 10,
+  "rate_limit": {
+    "enabled": true,
+    "requests_per_second": 5
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "pegasus.log"
+  },
+  "output_directory": "reports",
+  "cache_enabled": true,
+  "cache_expiry": 3600
+}
