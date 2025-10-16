@@ -138,6 +138,23 @@ Contributions are welcome! Please read CONTRIBUTING.md for guidelines.
 
 MIT License - See LICENSE file for details
 
+## Author
+
+**Lettu Kes dr. Muhammad Sobri Maulana, S.Kom, CEH, OSCP, OSCE**
+
+### Contact
+
+- 📧 Email: [muhammadsobrimaulana31@gmail.com](mailto:muhammadsobrimaulana31@gmail.com)
+- 🐙 GitHub: [github.com/sobri3195](https://github.com/sobri3195)
+- 💰 Donasi: [https://lynk.id/muhsobrimaulana](https://lynk.id/muhsobrimaulana)
+
+### Social Media & Community
+
+- 🎥 YouTube: [Muhammad Sobri Maulana](https://www.youtube.com/@muhammadsobrimaulana6013)
+- 📱 TikTok: [@dr.sobri](https://www.tiktok.com/@dr.sobri)
+- 💬 Telegram: [winlin_exploit](https://t.me/winlin_exploit)
+- 👥 WhatsApp Group: [Join Here](https://chat.whatsapp.com/B8nwRZOBMo64GjTwdXV8Bl)
+
 ## Support
 
-For issues and questions, please open a GitHub issue.
+For issues and questions, please open a GitHub issue or contact via email.
