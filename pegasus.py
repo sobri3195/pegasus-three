@@ -27,7 +27,24 @@ logger = setup_logger()
 class PegasusOSINT:
     def __init__(self):
         self.config = self.load_config()
-        self.results = {}
+        self._apply_safe_defaults()
+        self.results = {'audit_id': self._generate_audit_id()}
+        
+    def _generate_audit_id(self):
+        from hashlib import sha256
+        return sha256(str(datetime.now().timestamp()).encode()).hexdigest()[:12]
+        
+    def _apply_safe_defaults(self):
+        # Safer defaults and feature toggles
+        self.config.setdefault('deep_scan', False)
+        self.config.setdefault('rate_limit', 0)
+        self.config.setdefault('concurrency', 1)
+        self.config.setdefault('retries', 2)
+        self.config.setdefault('backoff_factor', 0.5)
+        self.config.setdefault('report', {'theme': 'light', 'include_sections': [], 'txt_minimal': False})
+        self.config.setdefault('intrusive_checks', False)
+        self.config.setdefault('proxy', None)
+        self.config.setdefault('audit', {'enabled': True})
         
     def load_config(self):
         config_file = Path('config.json')
@@ -42,8 +59,17 @@ class PegasusOSINT:
             'scan_intensity': 'medium',
             'output_format': 'html',
             'use_proxy': False,
-            'timeout': 30,
-            'user_agent': 'Pegasus-OSINT/1.0'
+            'timeout': 20,
+            'user_agent': 'Pegasus-OSINT/1.0',
+            'deep_scan': False,
+            'rate_limit': 0,
+            'concurrency': 1,
+            'retries': 2,
+            'backoff_factor': 0.5,
+            'report': {'theme': 'light', 'include_sections': [], 'txt_minimal': False},
+            'intrusive_checks': False,
+            'proxy': None,
+            'audit': {'enabled': True}
         }
     
     def run_osint_scan(self, target):
@@ -89,6 +115,12 @@ class PegasusOSINT:
         return self.results['profile']
     
     def generate_report(self, output_file, format='html'):
+        if not output_file:
+            # Auto filename in unified output dir
+            out_dir = Path(self.config.get('output_dir') or 'outputs')
+            out_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"pegasus_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{format}"
+            output_file = str(out_dir / filename)
         logger.info(f"Generating report: {output_file}")
         generator = ReportGenerator(self.config)
         return generator.generate(self.results, output_file, format)
@@ -121,8 +153,15 @@ Examples:
     parser.add_argument('--deep-scan', action='store_true', help='Enable deep scanning')
     
     parser.add_argument('--output', '-o', help='Output file path')
-    parser.add_argument('--format', choices=['html', 'json', 'pdf'], default='html',
+    parser.add_argument('--format', choices=['html', 'json', 'pdf', 'txt'], default='html',
                        help='Output format')
+    parser.add_argument('--output-dir', help='Directory to store outputs')
+    parser.add_argument('--rate-limit', type=float, default=0, help='Requests per second limit (0 = unlimited)')
+    parser.add_argument('--concurrency', type=int, default=1, help='Parallelism level for supported ops')
+    parser.add_argument('--retries', type=int, default=2, help='HTTP retry attempts')
+    parser.add_argument('--backoff', type=float, default=0.5, help='Exponential backoff factor')
+    parser.add_argument('--proxy', help='HTTP/SOCKS proxy URL')
+    parser.add_argument('--intrusive-checks', action='store_true', help='Enable potentially intrusive checks')
     parser.add_argument('--config', help='Custom config file')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     
@@ -139,6 +178,17 @@ def main():
         sys.exit(1)
     
     pegasus = PegasusOSINT()
+    
+    # Apply CLI-derived config overrides
+    pegasus.config['deep_scan'] = bool(args.deep_scan)
+    pegasus.config['rate_limit'] = args.rate_limit
+    pegasus.config['concurrency'] = args.concurrency
+    pegasus.config['retries'] = args.retries
+    pegasus.config['backoff_factor'] = args.backoff
+    pegasus.config['proxy'] = args.proxy
+    pegasus.config['intrusive_checks'] = bool(args.intrusive_checks)
+    if args.output_dir:
+        pegasus.config['output_dir'] = args.output_dir
     
     try:
         if args.domain or (args.target and not args.module):
@@ -168,7 +218,7 @@ def main():
         if args.profile:
             pegasus.create_profile(args.target)
         
-        if args.output:
+        if args.output or pegasus.config.get('output_dir'):
             pegasus.generate_report(args.output, args.format)
         else:
             print("\n" + "="*60)

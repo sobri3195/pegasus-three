@@ -19,8 +19,16 @@ class EmailIntelligence:
             'valid': self.validate_email(email),
             'domain_info': self.check_domain(email),
             'breach_check': self.check_breaches(email),
+            'breach_summary': self.summarize_breaches(email),
             'disposable': self.check_disposable(email),
+            'role_account': self.detect_role_account(email),
             'format': self.analyze_format(email),
+            'gravatar': self.generate_gravatar_hash(email),
+            'email_auth': self.inspect_email_auth(email),
+            'mx_analysis': self.analyze_mx(email),
+            'catch_all': self.detect_catch_all(email),
+            'typo_suggestions': self.suggest_typos(email),
+            'smtp_probe': self.simulate_smtp_probe(email) if self.config.get('intrusive_checks') else {'enabled': False},
             'social_profiles': self.find_social_profiles(email)
         }
         return results
@@ -66,14 +74,12 @@ class EmailIntelligence:
             }
     
     def check_breaches(self, email):
-        email_hash = hashlib.sha1(email.encode()).hexdigest()
-        
         try:
             api_key = self.config.get('api_keys', {}).get('haveibeenpwned')
             if api_key:
                 headers = {
                     'hibp-api-key': api_key,
-                    'User-Agent': self.config.get('user_agent')
+                    'User-Agent': self.config.get('user_agent', 'Pegasus-OSINT/1.0')
                 }
                 response = requests.get(
                     f'https://haveibeenpwned.com/api/v3/breachedaccount/{email}',
@@ -91,7 +97,7 @@ class EmailIntelligence:
                         'found': False,
                         'message': 'No breaches found'
                     }
-        except Exception as e:
+        except Exception:
             pass
         
         return {
@@ -99,13 +105,22 @@ class EmailIntelligence:
             'message': 'API key required for breach check'
         }
     
+    def summarize_breaches(self, email):
+        details = self.check_breaches(email)
+        summary = {'total': 0, 'sources': []}
+        if details.get('found') and isinstance(details.get('breaches'), list):
+            summary['total'] = len(details['breaches'])
+            summary['sources'] = [b.get('Name') for b in details['breaches'] if isinstance(b, dict)]
+        return summary
+    
     def check_disposable(self, email):
         domain = email.split('@')[1]
         
         disposable_domains = [
             'tempmail.com', 'guerrillamail.com', '10minutemail.com',
             'mailinator.com', 'throwaway.email', 'temp-mail.org',
-            'fakeinbox.com', 'trashmail.com'
+            'fakeinbox.com', 'trashmail.com', 'yopmail.com', 'mintemail.com',
+            'getnada.com', 'dispostable.com', 'sharklasers.com', 'spamgourmet.com'
         ]
         
         return {
@@ -144,7 +159,7 @@ class EmailIntelligence:
         
         try:
             response = requests.get(
-                f'https://api.fullcontact.com/v3/person.enrich',
+                'https://api.fullcontact.com/v3/person.enrich',
                 headers={'Authorization': f'Bearer {self.config.get("api_keys", {}).get("fullcontact", "")}'},
                 json={'email': email},
                 timeout=10
@@ -153,10 +168,91 @@ class EmailIntelligence:
             if response.status_code == 200:
                 data = response.json()
                 profiles = data.get('socialProfiles', [])
-        except:
+        except Exception:
             pass
         
         return profiles
+    
+    def inspect_email_auth(self, email):
+        domain = email.split('@')[1]
+        result = {'spf': None, 'dmarc': None, 'dmarc_grade': None}
+        try:
+            txt = dns.resolver.resolve(domain, 'TXT')
+            records = [str(rdata.strings[0].decode()) if hasattr(rdata, 'strings') and rdata.strings else str(rdata) for rdata in txt]
+            spf_records = [t for t in records if 'v=spf1' in t]
+            result['spf'] = spf_records[0] if spf_records else None
+        except Exception:
+            result['spf'] = None
+        try:
+            dmarc_domain = f'_dmarc.{domain}'
+            txt = dns.resolver.resolve(dmarc_domain, 'TXT')
+            dmarc_records = [str(rdata.strings[0].decode()) if hasattr(rdata, 'strings') and rdata.strings else str(rdata) for rdata in txt]
+            dmarc_policy = None
+            if dmarc_records:
+                rec = dmarc_records[0]
+                m = re.search(r'p=([a-zA-Z]+)', rec)
+                if m:
+                    dmarc_policy = m.group(1)
+            grade = 'low'
+            if dmarc_policy == 'reject':
+                grade = 'high'
+            elif dmarc_policy == 'quarantine':
+                grade = 'medium'
+            result['dmarc'] = {'record': dmarc_records[0] if dmarc_records else None, 'policy': dmarc_policy}
+            result['dmarc_grade'] = grade
+        except Exception:
+            result['dmarc'] = None
+            result['dmarc_grade'] = None
+        result['dkim'] = {'note': 'Selector required for DKIM check'}
+        return result
+    
+    def analyze_mx(self, email):
+        domain = email.split('@')[1]
+        try:
+            mx_records = dns.resolver.resolve(domain, 'MX')
+            entries = []
+            for mx in mx_records:
+                preference = getattr(mx, 'preference', 0)
+                exchange = str(mx.exchange).rstrip('.')
+                provider = None
+                if 'google' in exchange:
+                    provider = 'Google Workspace'
+                elif 'outlook' in exchange or 'office365' in exchange or 'protection.outlook.com' in exchange:
+                    provider = 'Microsoft 365'
+                elif 'yahoodns' in exchange or 'yahoo' in exchange:
+                    provider = 'Yahoo'
+                entries.append({'preference': preference, 'exchange': exchange, 'provider': provider})
+            entries.sort(key=lambda x: x.get('preference', 0))
+            return {'mx': entries}
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def detect_catch_all(self, email):
+        # Non-intrusive placeholder
+        return {'supported': False, 'note': 'Catch-all detection requires SMTP probing'}
+    
+    def simulate_smtp_probe(self, email):
+        # Best-effort safe probe outline, does not send any mail
+        return {'enabled': False, 'note': 'SMTP probing disabled by default'}
+    
+    def generate_gravatar_hash(self, email):
+        md5 = hashlib.md5(email.strip().lower().encode()).hexdigest()
+        return {'md5': md5, 'url': f'https://www.gravatar.com/avatar/{md5}'}
+    
+    def detect_role_account(self, email):
+        username = email.split('@')[0].lower()
+        roles = ['admin', 'info', 'support', 'sales', 'contact', 'help', 'billing']
+        return {'is_role': username in roles, 'role': username if username in roles else None}
+    
+    def suggest_typos(self, email):
+        username, domain = email.split('@')
+        suggestions = []
+        common = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com']
+        if domain not in common:
+            for c in common:
+                if sorted(domain) == sorted(c) or domain.replace('.', '') == c.replace('.', ''):
+                    suggestions.append(f'{username}@{c}')
+        return suggestions
     
     def generate_email_variations(self, first_name, last_name, domain):
         variations = [
