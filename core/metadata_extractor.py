@@ -38,6 +38,9 @@ class MetadataExtractor:
             'file_type': file_extension,
             'timestamp': datetime.now().isoformat(),
             'basic_info': self.get_basic_file_info(file_path),
+            'hashes': self.compute_hashes(file_path),
+            'mime_signature': self.detect_mime_signature(file_path),
+            'entropy': self.compute_entropy(file_path),
             'metadata': extractor(file_path)
         }
         
@@ -58,28 +61,30 @@ class MetadataExtractor:
             image = Image.open(file_path)
             exif_data = image._getexif()
             
-            if not exif_data:
-                return {'message': 'No EXIF data found'}
-            
             metadata = {}
             
-            for tag_id, value in exif_data.items():
-                tag = TAGS.get(tag_id, tag_id)
-                
-                if tag == 'GPSInfo':
-                    gps_data = {}
-                    for gps_tag_id in value:
-                        gps_tag = GPSTAGS.get(gps_tag_id, gps_tag_id)
-                        gps_data[gps_tag] = value[gps_tag_id]
+            if exif_data:
+                for tag_id, value in exif_data.items():
+                    tag = TAGS.get(tag_id, tag_id)
                     
-                    metadata['GPS'] = gps_data
-                    metadata['Location'] = self.get_coordinates(gps_data)
-                else:
-                    metadata[tag] = str(value)
+                    if tag == 'GPSInfo':
+                        gps_data = {}
+                        for gps_tag_id in value:
+                            gps_tag = GPSTAGS.get(gps_tag_id, gps_tag_id)
+                            gps_data[gps_tag] = value[gps_tag_id]
+                        
+                        metadata['GPS'] = gps_data
+                        metadata['Location'] = self.get_coordinates(gps_data)
+                    else:
+                        metadata[tag] = str(value)
+            else:
+                metadata['message'] = 'No EXIF data found'
             
             metadata['Image_Size'] = f"{image.width}x{image.height}"
             metadata['Image_Format'] = image.format
             metadata['Image_Mode'] = image.mode
+            metadata['Orientation'] = exif_data.get(274) if exif_data else None
+            metadata['Histogram'] = self.color_histogram_summary(image)
             
             return metadata
             
@@ -103,9 +108,10 @@ class MetadataExtractor:
             return {
                 'latitude': lat,
                 'longitude': lon,
-                'maps_url': f'https://maps.google.com/?q={lat},{lon}'
+                'maps_url': f'https://maps.google.com/?q={lat},{lon}',
+                'accuracy_estimate': 'unknown'
             }
-        except:
+        except Exception:
             return None
     
     def extract_pdf_metadata(self, file_path):
@@ -114,20 +120,27 @@ class MetadataExtractor:
                 pdf = PyPDF2.PdfReader(f)
                 
                 metadata = pdf.metadata
+                embedded = self.detect_pdf_embedded_files(pdf)
+                
+                info = {
+                    'pages': len(pdf.pages),
+                    'embedded_files': embedded
+                }
                 
                 if metadata:
-                    return {
+                    info.update({
                         'title': metadata.get('/Title', 'N/A'),
                         'author': metadata.get('/Author', 'N/A'),
                         'subject': metadata.get('/Subject', 'N/A'),
                         'creator': metadata.get('/Creator', 'N/A'),
                         'producer': metadata.get('/Producer', 'N/A'),
                         'creation_date': metadata.get('/CreationDate', 'N/A'),
-                        'modification_date': metadata.get('/ModDate', 'N/A'),
-                        'pages': len(pdf.pages)
-                    }
+                        'modification_date': metadata.get('/ModDate', 'N/A')
+                    })
                 else:
-                    return {'message': 'No metadata found'}
+                    info['message'] = 'No metadata found'
+                
+                return info
                     
         except Exception as e:
             return {'error': str(e)}
@@ -170,3 +183,60 @@ class MetadataExtractor:
                 results.append(self.extract(file_path))
         
         return results
+    
+    def compute_hashes(self, file_path):
+        import hashlib
+        hashes = {'md5': None, 'sha1': None, 'sha256': None}
+        try:
+            with open(file_path, 'rb') as f:
+                data = f.read()
+                hashes['md5'] = hashlib.md5(data).hexdigest()
+                hashes['sha1'] = hashlib.sha1(data).hexdigest()
+                hashes['sha256'] = hashlib.sha256(data).hexdigest()
+        except Exception as e:
+            hashes['error'] = str(e)
+        return hashes
+    
+    def detect_mime_signature(self, file_path):
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(8)
+            sig = header.hex()
+            mime = 'application/octet-stream'
+            if header.startswith(b'\xFF\xD8'):
+                mime = 'image/jpeg'
+            elif header.startswith(b'\x89PNG'):
+                mime = 'image/png'
+            elif header.startswith(b'%PDF'):
+                mime = 'application/pdf'
+            return {'signature': sig, 'mime': mime}
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def compute_entropy(self, file_path):
+        try:
+            import math
+            from collections import Counter
+            with open(file_path, 'rb') as f:
+                data = f.read()
+            counts = Counter(data)
+            total = len(data) if data else 1
+            entropy = -sum((c/total) * math.log2(c/total) for c in counts.values())
+            return round(entropy, 4)
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def color_histogram_summary(self, image):
+        try:
+            hist = image.histogram()
+            return hist[:10]  # sample first 10 bins for brevity
+        except Exception:
+            return None
+    
+    def detect_pdf_embedded_files(self, pdf_reader):
+        try:
+            if '/Names' in pdf_reader.trailer['/Root'] and '/EmbeddedFiles' in pdf_reader.trailer['/Root']['/Names']:
+                return True
+        except Exception:
+            pass
+        return False

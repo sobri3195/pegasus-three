@@ -20,8 +20,14 @@ class DataProfiler:
             'timeline': self.create_timeline(collected_data),
             'relationships': self.map_relationships(collected_data),
             'risk_assessment': self.assess_profile_risk(collected_data),
+            'entity_resolution': self.resolve_entities(collected_data),
+            'relation_matrix': self.export_relation_matrix(collected_data),
+            'confidence_explanation': self.explain_confidence(collected_data),
             'data_sources': list(collected_data.keys())
         }
+        
+        if self.config.get('report', {}).get('redact', False):
+            profile['redacted'] = self.redact_profile(profile)
         
         return profile
     
@@ -51,8 +57,10 @@ class DataProfiler:
         identity = {
             'names': [],
             'usernames': [],
+            'aliases': [],
             'emails': [],
-            'phone_numbers': []
+            'phone_numbers': [],
+            'affiliations': []
         }
         
         if 'social' in data:
@@ -66,10 +74,15 @@ class DataProfiler:
         
         if 'email' in data:
             identity['emails'].append(data['email'].get('email'))
+            # Affiliation from email domain
+            domain = (data['email'].get('email') or '').split('@')[-1]
+            if domain:
+                identity['affiliations'].append({'type': 'domain', 'value': domain})
         
         if 'phone' in data:
             identity['phone_numbers'].append(data['phone'].get('phone_number'))
         
+        identity['aliases'] = self.discover_aliases(identity)
         identity['names'] = list(set(identity['names']))
         identity['usernames'] = list(set(identity['usernames']))
         identity['emails'] = list(set(identity['emails']))
@@ -172,7 +185,8 @@ class DataProfiler:
                 timeline.append({
                     'date': whois_data['creation_date'],
                     'event': 'Domain registered',
-                    'source': 'WHOIS'
+                    'source': 'WHOIS',
+                    'confidence': 0.9
                 })
         
         if 'metadata' in data:
@@ -182,7 +196,8 @@ class DataProfiler:
                 timeline.append({
                     'date': basic_info['created'],
                     'event': 'File created',
-                    'source': 'File Metadata'
+                    'source': 'File Metadata',
+                    'confidence': 0.7
                 })
         
         timeline.sort(key=lambda x: x.get('date', ''), reverse=True)
@@ -285,3 +300,57 @@ class DataProfiler:
             confidence += 15
         
         return min(confidence, 100)
+    
+    def explain_confidence(self, data):
+        explanation = []
+        if 'email' in data and data['email'].get('valid', {}).get('valid'):
+            explanation.append('Valid email increases confidence')
+        if 'phone' in data and data['phone'].get('validation', {}).get('valid'):
+            explanation.append('Valid phone increases confidence')
+        if 'social' in data and len(data['social'].get('platforms_found', [])) > 0:
+            explanation.append('Active social presence increases confidence')
+        return explanation
+    
+    def resolve_entities(self, data):
+        # Simple resolver to deduplicate by canonical forms
+        canonical = {}
+        if 'identity' in data:
+            ident = data['identity']
+            canonical['primary_name'] = ident.get('names', [None])[0]
+            canonical['primary_email'] = ident.get('emails', [None])[0]
+            canonical['primary_phone'] = ident.get('phone_numbers', [None])[0]
+        return canonical
+    
+    def export_relation_matrix(self, data):
+        nodes = []
+        edges = []
+        # Nodes: email, phone, domain
+        if 'email' in data and data['email'].get('email'):
+            nodes.append({'id': data['email']['email'], 'type': 'email'})
+        if 'phone' in data and data['phone'].get('phone_number'):
+            nodes.append({'id': data['phone']['phone_number'], 'type': 'phone'})
+        if 'osint' in data and data['osint'].get('target'):
+            nodes.append({'id': data['osint']['target'], 'type': 'domain'})
+        # Edges
+        if 'email' in data and 'osint' in data:
+            email_domain = data['email'].get('email', '').split('@')[-1]
+            if email_domain == data['osint'].get('target'):
+                edges.append({'from': data['email']['email'], 'to': data['osint']['target'], 'type': 'domain_association'})
+        return {'nodes': nodes, 'edges': edges}
+    
+    def discover_aliases(self, identity):
+        aliases = []
+        for name in identity.get('names', []):
+            parts = name.split()
+            if len(parts) >= 2:
+                aliases.append(f"{parts[0]} {parts[-1][0]}.")
+        return list(set(aliases))
+    
+    def redact_profile(self, profile):
+        # Redact PII fields for safe sharing
+        redacted = json.loads(json.dumps(profile))
+        # Mask email and phone
+        if 'identity' in redacted:
+            redacted['identity']['emails'] = ['***@***'] if redacted['identity'].get('emails') else []
+            redacted['identity']['phone_numbers'] = ['+***********'] if redacted['identity'].get('phone_numbers') else []
+        return redacted

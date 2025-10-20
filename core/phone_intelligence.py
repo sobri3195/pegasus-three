@@ -21,6 +21,12 @@ class PhoneIntelligence:
             'location': self.get_location(phone_number),
             'timezone': self.get_timezone(phone_number),
             'format_info': self.get_format_info(phone_number),
+            'regional_format_hint': self.regional_format_hint(phone_number),
+            'ndc_analysis': self.analyze_ndc(phone_number),
+            'contact_window': self.suggest_contact_window(phone_number),
+            'cnam': self.cnam_lookup(phone_number),
+            'reachability': self.reachability_category(phone_number),
+            'country_risk': self.country_risk_map(phone_number),
             'risk_assessment': self.assess_risk(phone_number)
         }
         return results
@@ -119,6 +125,58 @@ class PhoneIntelligence:
                 'error': str(e)
             }
     
+    def regional_format_hint(self, phone_number):
+        try:
+            parsed = phonenumbers.parse(phone_number, None)
+            region = phonenumbers.region_code_for_number(parsed)
+            national = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.NATIONAL)
+            return {'region': region, 'hint': national}
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def analyze_ndc(self, phone_number):
+        try:
+            parsed = phonenumbers.parse(phone_number, None)
+            ndc_length = phonenumbers.length_of_national_destination_code(parsed)
+            ndc = phonenumbers.national_significant_number(parsed)[:ndc_length] if ndc_length else None
+            return {'ndc': ndc, 'length': ndc_length}
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def suggest_contact_window(self, phone_number):
+        try:
+            tz = self.get_timezone(phone_number).get('timezones', [])
+            return {'timezones': tz, 'suggested_local_hours': '09:00-18:00'}
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def cnam_lookup(self, phone_number):
+        return {'available': False, 'note': 'CNAM lookup requires external API'}
+    
+    def reachability_category(self, phone_number):
+        try:
+            parsed = phonenumbers.parse(phone_number, None)
+            t = self.get_number_type(parsed)
+            category = 'likely' if t in ['MOBILE', 'FIXED_LINE', 'FIXED_LINE_OR_MOBILE'] else 'unknown'
+            return {'category': category}
+        except Exception as e:
+            return {'category': 'unknown', 'error': str(e)}
+    
+    def country_risk_map(self, phone_number):
+        try:
+            parsed = phonenumbers.parse(phone_number, None)
+            region = phonenumbers.region_code_for_number(parsed)
+            high_risk = {'NG', 'RU'}
+            medium_risk = {'CN', 'BR'}
+            level = 'LOW'
+            if region in high_risk:
+                level = 'HIGH'
+            elif region in medium_risk:
+                level = 'MEDIUM'
+            return {'country': region, 'risk_level': level}
+        except Exception as e:
+            return {'error': str(e)}
+    
     def assess_risk(self, phone_number):
         risk_score = 0
         risk_factors = []
@@ -144,7 +202,11 @@ class PhoneIntelligence:
                 risk_score += 10
                 risk_factors.append('Unknown carrier')
             
-        except:
+            # Ported and virtual hints
+            if number_type in ['VOIP']:
+                risk_factors.append('Possible virtual/throwaway number')
+            
+        except Exception:
             risk_score = 100
             risk_factors.append('Parse error')
         
